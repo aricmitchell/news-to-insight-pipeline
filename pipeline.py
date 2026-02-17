@@ -1,15 +1,12 @@
 """
-News-to-Insight Pipeline (starter)
-
-Step goal:
-- Fetch newest items from Hacker News
-- Print a simple list of titles + links (no filtering yet)
+News-to-Insight Pipeline (AI filtered version)
 """
 
 from __future__ import annotations
 
 import sys
 import time
+import json
 from typing import List, Dict, Any
 
 import requests
@@ -51,26 +48,42 @@ def main() -> int:
     ids = get_newest_story_ids(limit=limit)
 
     items: List[Dict[str, Any]] = []
-    for i, item_id in enumerate(ids, start=1):
+    # Load previously seen story IDs
+    try:
+        with open("seen.json", "r") as f:
+            seen_ids = set(json.load(f))
+    except FileNotFoundError:
+        seen_ids = set()
+
+    keywords = ["ai", "artificial intelligence", "llm", "agent", "model", "openai", "anthropic", "gpt"]
+
+    for item_id in ids:
+        if item_id in seen_ids:
+            continue
         try:
             item = get_item(item_id)
-            # Be polite to the API
             time.sleep(0.15)
         except Exception as e:
             print(f"[skip] {item_id}: {e}")
             continue
 
-        # Only keep stories with a title
         title = item.get("title")
         if not title:
             continue
 
         url = item.get("url") or f"https://news.ycombinator.com/item?id={item_id}"
-        items.append({"id": item_id, "title": title, "url": url})
 
-    for idx, it in enumerate(items, start=1):
-        print(f"{idx:02d}. {it['title']}\n    {it['url']}\n")
+        title_lower = title.lower()
+        if any(k in title_lower for k in keywords):
+            items.append({"id": item_id, "title": title, "url": url})
 
+    print("# AI threads worth a look\n")
+    for it in items:
+        print(f"- [{it['title']}]({it['url']})")
+    # Persist seen IDs for next run
+    seen_ids.update(it["id"] for it in items)
+    with open("seen.json", "w") as f:
+        json.dump(sorted(seen_ids), f, indent=2)
     return 0
 
 
