@@ -10,10 +10,11 @@ import json
 from typing import List, Dict, Any
 
 import requests
+import feedparser
 
 HN_NEWEST_API = "https://hacker-news.firebaseio.com/v0/newstories.json"
 HN_ITEM_API = "https://hacker-news.firebaseio.com/v0/item/{id}.json"
-
+GOOGLE_ALERTS_FEED = "https://www.google.com/alerts/feeds/09577483079640570873/17508476745309795132"
 
 def fetch_json(url: str, timeout: int = 20) -> Any:
     r = requests.get(url, timeout=timeout)
@@ -35,6 +36,17 @@ def get_item(item_id: int) -> Dict[str, Any]:
         raise TypeError(f"Unexpected item format for id={item_id}")
     return data
 
+def get_google_alerts_items(limit: int = 20) -> List[Dict[str, str]]:
+    feed = feedparser.parse(GOOGLE_ALERTS_FEED)
+
+    items: List[Dict[str, str]] = []
+    for entry in feed.entries[:limit]:
+        title = (entry.get("title") or "").strip()
+        link = (entry.get("link") or "").strip()
+        if not title or not link:
+            continue
+        items.append({"title": title, "url": link})
+    return items
 
 def main() -> int:
     limit = 30
@@ -46,6 +58,7 @@ def main() -> int:
             return 2
 
     ids = get_newest_story_ids(limit=limit)
+    google_items = get_google_alerts_items(limit=limit)
 
     items: List[Dict[str, Any]] = []
     # Load previously seen story IDs
@@ -54,6 +67,31 @@ def main() -> int:
             seen_ids = set(json.load(f))
     except FileNotFoundError:
         seen_ids = set()
+    try:
+        with open("seen_google.json", "r") as f:
+            seen_google = set(json.load(f))
+    except FileNotFoundError:
+        seen_google = set()
+
+    google_items = [it for it in google_items if it["url"] not in seen_google]
+    business_keywords = [
+        "work", "workplace", "employee", "manager",
+        "productivity", "office", "corporate",
+        "enterprise", "executive", "operations",
+        "hr", "finance", "sales", "marketing",
+    ]
+
+    def business_score(title: str) -> int:
+        t = title.lower()
+        return sum(1 for k in business_keywords if k in t)
+
+    google_items = [it for it in google_items if business_score(it["title"]) >= 1]
+
+    google_items = sorted(
+        google_items,
+        key=lambda it: business_score(it["title"]),
+        reverse=True,
+    )
 
     keywords = ["ai", "artificial intelligence", "llm", "agent", "model", "openai", "anthropic", "gpt"]
 
@@ -77,13 +115,30 @@ def main() -> int:
         if any(k in title_lower for k in keywords):
             items.append({"id": item_id, "title": title, "url": url})
 
-    print("# AI threads worth a look\n")
+    print("# Google Alerts\n")
+    for it in google_items:
+        print(f"- [{it['title']}]({it['url']})")
+
+    print("\n# Hacker News\n")
     for it in items:
         print(f"- [{it['title']}]({it['url']})")
-    # Persist seen IDs for next run
+
+    # Persist seen items for next run (HN ids + Google URLs)
+    seen_google = set()
+    try:
+        with open("seen_google.json", "r") as f:
+            seen_google = set(json.load(f))
+    except FileNotFoundError:
+        seen_google = set()
+
     seen_ids.update(it["id"] for it in items)
+    seen_google.update(it["url"] for it in google_items)
+
     with open("seen.json", "w") as f:
         json.dump(sorted(seen_ids), f, indent=2)
+
+    with open("seen_google.json", "w") as f:
+        json.dump(sorted(seen_google), f, indent=2)
     return 0
 
 
